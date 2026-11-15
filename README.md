@@ -1,4 +1,3 @@
-cat > ~/ai-browser/README.md <<'EOF'
 # AI Browser 🛡️
 
 A small desktop web browser built with Electron (Chromium + Node.js), with an AI sidebar and a built-in scam-link checker.
@@ -29,4 +28,3 @@ Needs Node.js and a free Groq API key.
 - Uses Electron's webview tag, which Electron recommends replacing with WebContentsView
 
 Built while learning agentic AI, cloud and cybersecurity.
-EOF
