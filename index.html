@@ -16,10 +16,11 @@
       #bar { display: flex; gap: 6px; padding: 8px; background: #eee; position: relative; }
       #url { flex: 1; padding: 6px; font-size: 14px; }
       #star { font-size: 18px; width: 36px; }
+      #profileBadge { font-size: 13px; }
       #menuBtn { width: 36px; }
 
       /* menu dropdown */
-      #menu { display: none; position: absolute; right: 8px; top: 42px; background: white; border: 1px solid #ccc; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 10; min-width: 190px; }
+      #menu { display: none; position: absolute; right: 8px; top: 42px; background: white; border: 1px solid #ccc; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 10; min-width: 200px; }
       #menu.show { display: block; }
       #menu button { display: block; width: 100%; text-align: left; padding: 10px 14px; border: none; background: none; cursor: pointer; font-size: 14px; }
       #menu button:hover { background: #f0f0f0; }
@@ -34,6 +35,19 @@
       #views { flex: 1; position: relative; }
       webview { position: absolute; inset: 0; width: 100%; height: 100%; visibility: hidden; }
       webview.active { visibility: visible; }
+
+      /* home / new-tab search page, shown instead of a webview */
+      #homeOverlay {
+        position: absolute; inset: 0; display: none; flex-direction: column;
+        align-items: center; justify-content: center; background: white; gap: 18px;
+      }
+      #homeOverlay.active { display: flex; }
+      #homeLogo { font-size: 30px; font-weight: bold; color: #333; }
+      #homeSearch { width: 60%; max-width: 560px; padding: 14px 18px; font-size: 16px; border: 1px solid #ccc; border-radius: 24px; outline: none; }
+      #homeSearch:focus { border-color: #1a73e8; box-shadow: 0 1px 6px rgba(26,115,232,0.3); }
+      #homeHint { font-size: 13px; color: #777; }
+      #homeHint a { color: #1a73e8; text-decoration: none; }
+
       #side { width: 320px; padding: 12px; background: #f7f7f7; border-left: 1px solid #ccc; overflow-y: auto; }
       #side button { width: 100%; padding: 10px; font-size: 15px; margin-bottom: 8px; }
       #out { white-space: pre-wrap; margin-top: 12px; font-size: 14px; line-height: 1.5; }
@@ -51,13 +65,16 @@
       <input id="url" placeholder="Type a website or search..." />
       <button id="star" title="Bookmark this page">☆</button>
       <button id="go">Go</button>
+      <button id="profileBadge" title="Switch profile"></button>
       <button id="menuBtn">☰</button>
       <div id="menu">
         <button id="menuHistory">🕘 History (⌘Y)</button>
         <button id="menuBookmarks">⭐ Bookmarks</button>
         <button id="menuDownloads">⬇️ Downloads (⌘⇧J)</button>
+        <button id="menuSearch">🔎 My Search Engine</button>
         <button id="menuSettings">⚙️ Settings (⌘,)</button>
         <button id="menuNewWindow">🪟 New Window (⌘⇧N)</button>
+        <button id="menuSwitch">👤 Switch Profile</button>
       </div>
     </div>
 
@@ -68,7 +85,13 @@
     </div>
 
     <div id="main">
-      <div id="views"></div>
+      <div id="views">
+        <div id="homeOverlay">
+          <div id="homeLogo">🔎 AI Browser</div>
+          <input id="homeSearch" placeholder="Search your index or the web..." />
+          <div id="homeHint">Add sites to <a href="#" id="homeSearchLink">My Search Engine</a> so results come from your own ranked index.</div>
+        </div>
+      </div>
       <div id="side">
         <button id="summarize">✨ Summarize page</button>
         <button id="check">🛡️ Check safety</button>
@@ -88,12 +111,15 @@
       const starBtn = document.getElementById("star");
       const menuBtn = document.getElementById("menuBtn");
       const menu = document.getElementById("menu");
+      const profileBadge = document.getElementById("profileBadge");
+      const homeOverlay = document.getElementById("homeOverlay");
+      const homeSearch = document.getElementById("homeSearch");
 
       let tabs = [];
       let current = null;
       let pendingUrl = null;
       let bookmarksCache = [];
-      let settingsCache = { homepage: "https://www.wikipedia.org", searchEngine: "https://www.google.com/search?q=" };
+      let settingsCache = { homepage: "app:home", searchEngine: "https://www.google.com/search?q=" };
 
       // ---------- Safety rules ----------
       const SHORTENERS = ["bit.ly", "tinyurl.com", "t.co", "cutt.ly", "rb.gy", "is.gd"];
@@ -161,10 +187,10 @@
         return bookmarksCache.some((b) => b.url === u);
       }
       function updateStar() {
-        starBtn.textContent = current && isBookmarked(current.lastUrl) ? "★" : "☆";
+        starBtn.textContent = current && !current.isHome && isBookmarked(current.lastUrl) ? "★" : "☆";
       }
       async function toggleBookmark() {
-        if (!current) return;
+        if (!current || current.isHome) return;
         const u = current.lastUrl;
         if (isBookmarked(u)) {
           await window.browserData.bookmarksRemove(u);
@@ -181,19 +207,24 @@
       document.getElementById("menuHistory").onclick = () => window.browserData.openWindow("history");
       document.getElementById("menuBookmarks").onclick = () => window.browserData.openWindow("bookmarks");
       document.getElementById("menuDownloads").onclick = () => window.browserData.openWindow("downloads");
+      document.getElementById("menuSearch").onclick = () => window.browserData.openWindow("search");
       document.getElementById("menuSettings").onclick = () => window.browserData.openWindow("settings");
       document.getElementById("menuNewWindow").onclick = () => window.browserData.openNewBrowserWindow();
+      document.getElementById("menuSwitch").onclick = () => window.profiles.switchProfile();
+      profileBadge.onclick = () => window.profiles.switchProfile();
 
       // ---------- Tabs ----------
       function selectTab(tab) {
         current = tab;
         tabs.forEach((t) => {
-          t.view.classList.toggle("active", t === tab);
+          t.view.classList.toggle("active", t === tab && !t.isHome);
           t.el.classList.toggle("active", t === tab);
         });
-        url.value = tab.lastUrl;
+        homeOverlay.classList.toggle("active", tab.isHome);
+        url.value = tab.isHome ? "" : tab.lastUrl;
         hideWarning();
         updateStar();
+        if (tab.isHome) homeSearch.focus();
       }
 
       function closeTab(tab) {
@@ -209,8 +240,47 @@
         text = text.trim();
         if (!text) return null;
         const looksLikeUrl = text.startsWith("http") || (/^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(text) && !text.includes(" "));
-        if (looksLikeUrl) return text.startsWith("http") ? text : "https://" + text;
-        return settingsCache.searchEngine + encodeURIComponent(text);
+        return looksLikeUrl ? (text.startsWith("http") ? text : "https://" + text) : null;
+      }
+
+      // Builds a simple results page from our own ranked index, with a fallback
+      // link to the real web when our small index has nothing relevant.
+      async function performSearch(tab, query) {
+        tab.isHome = false;
+        const results = await window.browserData.searchQuery(query);
+        const fallbackUrl = settingsCache.searchEngine + encodeURIComponent(query);
+
+        let html;
+        if (results.length) {
+          html =
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><style>" +
+            "body{font-family:sans-serif;max-width:700px;margin:40px auto;padding:0 16px;color:#222;}" +
+            "h2{font-size:14px;color:#666;font-weight:normal;}" +
+            ".r{margin-bottom:22px;} .r a{font-size:18px;color:#1a0dab;text-decoration:none;} .r a:hover{text-decoration:underline;}" +
+            ".u{color:#006621;font-size:13px;} .s{color:#444;font-size:14px;margin-top:4px;}" +
+            "#fb{margin-top:30px;font-size:13px;color:#555;} #fb a{color:#1a73e8;}" +
+            "</style></head><body>" +
+            "<h2>🔎 Your Search — ranked results from your own index for \"" + query.replace(/</g, "&lt;") + "\"</h2>" +
+            results
+              .map(
+                (r) =>
+                  "<div class='r'><a href='" + r.url + "'>" + (r.title || r.url).replace(/</g, "&lt;") + "</a>" +
+                  "<div class='u'>" + r.url + " &middot; score " + r.score + "</div>" +
+                  "<div class='s'>" + r.snippet.replace(/</g, "&lt;") + "</div></div>"
+              )
+              .join("") +
+            "<div id='fb'>Not finding it? <a href='" + fallbackUrl + "'>Search the web instead →</a></div>" +
+            "</body></html>";
+          tab.view.src = "data:text/html;charset=utf-8," + encodeURIComponent(html);
+        } else {
+          tab.view.src = fallbackUrl;
+        }
+
+        if (tab === current) {
+          url.value = query;
+          homeOverlay.classList.remove("active");
+          tab.view.classList.add("active");
+        }
       }
 
       function newTab(startUrl) {
@@ -226,7 +296,8 @@
         close.textContent = "×";
         el.append(title, close);
 
-        const tab = { view, el, lastUrl: startUrl || settingsCache.homepage };
+        const useHome = !startUrl && settingsCache.homepage === "app:home";
+        const tab = { view, el, lastUrl: useHome ? "app:home" : (startUrl || settingsCache.homepage), isHome: useHome };
 
         el.onclick = () => selectTab(tab);
         close.onclick = (e) => { e.stopPropagation(); closeTab(tab); };
@@ -238,16 +309,23 @@
 
         view.addEventListener("did-navigate", (e) => {
           tab.lastUrl = e.url;
-          window.browserData.historyAdd({ url: e.url, title: title.textContent });
+          tab.isHome = false;
+          if (!e.url.startsWith("data:")) {
+            window.browserData.historyAdd({ url: e.url, title: title.textContent });
+          }
           if (tab !== current) return;
-          url.value = e.url;
+          url.value = e.url.startsWith("data:") ? url.value : e.url;
+          homeOverlay.classList.remove("active");
+          view.classList.add("active");
           updateStar();
-          const result = checkUrl(e.url);
-          if (result.score >= 4) showWarning(e.url, result, false);
-          else if (!pendingUrl) hideWarning();
+          if (!e.url.startsWith("data:")) {
+            const result = checkUrl(e.url);
+            if (result.score >= 4) showWarning(e.url, result, false);
+            else if (!pendingUrl) hideWarning();
+          }
         });
 
-        view.src = tab.lastUrl;
+        if (!useHome) view.src = tab.lastUrl;
         viewsBox.appendChild(view);
         tabsBar.insertBefore(el, newTabBtn);
         tabs.push(tab);
@@ -256,18 +334,43 @@
 
       newTabBtn.onclick = () => newTab();
 
+      // ---------- Home page search box ----------
+      homeSearch.onkeydown = (e) => {
+        if (e.key === "Enter" && homeSearch.value.trim()) {
+          const text = homeSearch.value.trim();
+          const direct = toLoadable(text);
+          if (direct) {
+            current.isHome = false;
+            current.view.src = direct;
+          } else {
+            performSearch(current, text);
+          }
+          homeSearch.value = "";
+        }
+      };
+      document.getElementById("homeSearchLink").onclick = (e) => {
+        e.preventDefault();
+        window.browserData.openWindow("search");
+      };
+
       // ---------- Address bar + buttons ----------
       function go() {
-        const text = toLoadable(url.value);
+        const text = url.value.trim();
         if (!text) return;
+        const direct = toLoadable(text);
 
-        const result = checkUrl(text);
-        if (result.score >= 4) {
-          showWarning(text, result, true);
-          return;
+        if (direct) {
+          const result = checkUrl(direct);
+          if (result.score >= 4) {
+            showWarning(direct, result, true);
+            return;
+          }
+          hideWarning();
+          current.isHome = false;
+          current.view.src = direct;
+        } else {
+          performSearch(current, text);
         }
-        hideWarning();
-        current.view.src = text;
       }
 
       document.getElementById("go").onclick = go;
@@ -278,6 +381,7 @@
 
       // ---------- Sidebar buttons ----------
       document.getElementById("summarize").onclick = async () => {
+        if (!current || current.isHome) { out.textContent = "Open a page first."; return; }
         out.textContent = "Reading the page... ⏳";
         const pageText = await current.view.executeJavaScript("document.body.innerText");
         out.textContent = "Asking AI... ⏳";
@@ -301,7 +405,7 @@
       window.browserData.onShortcut("shortcut:new-tab", () => newTab());
       window.browserData.onShortcut("shortcut:close-tab", () => current && closeTab(current));
       window.browserData.onShortcut("shortcut:focus-url", () => { url.focus(); url.select(); });
-      window.browserData.onShortcut("shortcut:reload", () => current && current.view.reload());
+      window.browserData.onShortcut("shortcut:reload", () => current && !current.isHome && current.view.reload());
       window.browserData.onShortcut("shortcut:bookmark", () => toggleBookmark());
 
       // ---------- Stay in sync with Bookmarks/Settings windows ----------
@@ -312,9 +416,12 @@
       (async function init() {
         settingsCache = await window.browserData.settingsGet();
         bookmarksCache = await window.browserData.bookmarksList();
+        const me = await window.profiles.current();
+        if (me) profileBadge.textContent = me.emoji + " " + me.name;
+
         const params = new URLSearchParams(location.search);
         const startUrl = params.get("start");
-        newTab(startUrl || settingsCache.homepage);
+        newTab(startUrl);
       })();
     </script>
   </body>

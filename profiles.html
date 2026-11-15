@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body {
+        font-family: sans-serif; margin: 0; height: 100vh;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        background: #f5f5f5;
+      }
+      h1 { font-size: 20px; margin-bottom: 28px; color: #333; }
+      #grid { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; max-width: 440px; }
+      .tile { display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: pointer; }
+      .avatar {
+        width: 84px; height: 84px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 34px; color: white; border: 3px solid transparent;
+      }
+      .avatar:hover { border-color: #333; }
+      .name { font-size: 13px; color: #333; max-width: 90px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .add {
+        width: 84px; height: 84px; border-radius: 50%; border: 2px dashed #999;
+        display: flex; align-items: center; justify-content: center; font-size: 30px; color: #999;
+      }
+      #form { display: none; margin-top: 26px; background: white; padding: 18px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.12); }
+      #form input { padding: 8px; font-size: 14px; width: 220px; }
+      #emojis { margin: 10px 0; }
+      #emojis span { font-size: 22px; margin-right: 8px; cursor: pointer; padding: 4px; border-radius: 6px; }
+      #emojis span.sel { background: #ddd; }
+      #form button { padding: 8px 14px; cursor: pointer; margin-right: 8px; }
+      p.note { font-size: 12px; color: #888; max-width: 380px; text-align: center; margin-top: 18px; }
+    </style>
+  </head>
+  <body>
+    <h1>Who's using this browser?</h1>
+    <div id="grid"></div>
+
+    <div id="form">
+      <div><input id="name" placeholder="Profile name" /></div>
+      <div id="emojis"></div>
+      <button id="createBtn">Create profile</button>
+      <button id="cancelBtn">Cancel</button>
+    </div>
+
+    <p class="note">Each profile keeps its own separate history, bookmarks, cookies and search index on this Mac — just like switching accounts in Chrome.</p>
+
+    <script>
+      const EMOJIS = ["🙂", "🦊", "🐼", "🚀", "🎧", "📚", "🌙", "🔥"];
+      let chosenEmoji = EMOJIS[0];
+
+      async function load() {
+        const list = await window.profiles.list();
+        const grid = document.getElementById("grid");
+        grid.innerHTML = "";
+
+        list.forEach((p) => {
+          const tile = document.createElement("div");
+          tile.className = "tile";
+          const av = document.createElement("div");
+          av.className = "avatar";
+          av.style.background = p.color;
+          av.textContent = p.emoji;
+          av.onclick = () => window.profiles.select(p.id);
+          const name = document.createElement("div");
+          name.className = "name";
+          name.textContent = p.name;
+          tile.append(av, name);
+          grid.appendChild(tile);
+        });
+
+        const addTile = document.createElement("div");
+        addTile.className = "tile";
+        const add = document.createElement("div");
+        add.className = "add";
+        add.textContent = "+";
+        add.onclick = () => {
+          document.getElementById("form").style.display = "block";
+          document.getElementById("name").focus();
+        };
+        const addLabel = document.createElement("div");
+        addLabel.className = "name";
+        addLabel.textContent = "Add profile";
+        addTile.append(add, addLabel);
+        grid.appendChild(addTile);
+      }
+
+      const emojiBox = document.getElementById("emojis");
+      EMOJIS.forEach((e) => {
+        const span = document.createElement("span");
+        span.textContent = e;
+        if (e === chosenEmoji) span.classList.add("sel");
+        span.onclick = () => {
+          chosenEmoji = e;
+          [...emojiBox.children].forEach((c) => c.classList.remove("sel"));
+          span.classList.add("sel");
+        };
+        emojiBox.appendChild(span);
+      });
+
+      document.getElementById("createBtn").onclick = async () => {
+        const name = document.getElementById("name").value.trim() || "New Profile";
+        const p = await window.profiles.create({ name, emoji: chosenEmoji });
+        await window.profiles.select(p.id);
+      };
+      document.getElementById("cancelBtn").onclick = () => {
+        document.getElementById("form").style.display = "none";
+      };
+      document.getElementById("name").onkeydown = (e) => {
+        if (e.key === "Enter") document.getElementById("createBtn").click();
+      };
+
+      load();
+    </script>
+  </body>
+</html>

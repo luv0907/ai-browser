@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body { font-family: sans-serif; margin: 0; padding: 16px; }
+      h1 { font-size: 18px; margin-top: 0; }
+      p.note { font-size: 12px; color: #777; }
+      #addRow { display: flex; gap: 8px; margin: 14px 0; }
+      #seed { flex: 1; padding: 8px; font-size: 14px; }
+      button { padding: 8px 12px; cursor: pointer; }
+      #status { font-size: 13px; color: #1a73e8; min-height: 18px; margin-bottom: 10px; }
+      table { width: 100%; border-collapse: collapse; }
+      td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid #eee; font-size: 13px; vertical-align: top; }
+      .del { color: #c33; cursor: pointer; white-space: nowrap; }
+      #empty { color: #777; padding: 16px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>🔎 My Search Engine</h1>
+    <p class="note">
+      Add a website below. This crawls that site's own pages (same domain only, up to 40 pages)
+      and ranks them with a small TF-IDF + link-count algorithm — the same family of idea real
+      search engines use, just at a personal scale. It is not a copy of the whole internet.
+    </p>
+
+    <div id="addRow">
+      <input id="seed" placeholder="e.g. en.wikipedia.org/wiki/Hyderabad" />
+      <button id="addBtn">Crawl and add</button>
+    </div>
+    <div id="status"></div>
+
+    <div id="empty" style="display:none">Nothing indexed yet. Add a site above.</div>
+    <table>
+      <thead><tr><th>Page title</th><th>Address</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+
+    <button id="clearAll" style="margin-top: 18px; color: #c33;">Clear entire index</button>
+
+    <script>
+      async function load() {
+        const items = await window.browserData.searchList();
+        const rows = document.getElementById("rows");
+        const empty = document.getElementById("empty");
+        rows.innerHTML = "";
+        empty.style.display = items.length ? "none" : "block";
+        items.forEach((it) => {
+          const tr = document.createElement("tr");
+          const tdTitle = document.createElement("td");
+          tdTitle.textContent = it.title;
+          const tdUrl = document.createElement("td");
+          tdUrl.textContent = it.url;
+          tdUrl.style.wordBreak = "break-all";
+          const tdDel = document.createElement("td");
+          const del = document.createElement("span");
+          del.className = "del";
+          del.textContent = "✕ remove site";
+          del.onclick = async () => {
+            try {
+              const host = new URL(it.url).hostname;
+              await window.browserData.searchRemoveSite(host);
+            } catch { /* ignore a malformed url */ }
+            load();
+          };
+          tdDel.appendChild(del);
+          tr.append(tdTitle, tdUrl, tdDel);
+          rows.appendChild(tr);
+        });
+      }
+
+      document.getElementById("addBtn").onclick = async () => {
+        const seed = document.getElementById("seed").value.trim();
+        if (!seed) return;
+        const status = document.getElementById("status");
+        const btn = document.getElementById("addBtn");
+        btn.disabled = true;
+        status.textContent = "Crawling " + seed + " ... this can take several seconds.";
+        const result = await window.browserData.searchAddSite(seed);
+        btn.disabled = false;
+        if (result.error) status.textContent = "Could not crawl it: " + result.error;
+        else status.textContent = "Added " + result.pagesAdded + " pages. Your index now has " + result.totalPages + " pages in total.";
+        document.getElementById("seed").value = "";
+        load();
+      };
+      document.getElementById("seed").onkeydown = (e) => {
+        if (e.key === "Enter") document.getElementById("addBtn").click();
+      };
+
+      document.getElementById("clearAll").onclick = async () => {
+        if (confirm("Clear your whole search index? This cannot be undone.")) {
+          await window.browserData.searchClear();
+          load();
+        }
+      };
+
+      load();
+    </script>
+  </body>
+</html>
