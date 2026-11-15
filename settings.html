@@ -18,6 +18,12 @@
   <body>
     <h1>⚙️ Settings</h1>
 
+    <label class="inline"><input type="checkbox" id="blockAds" /> 🛡️ Block ads &amp; trackers (Shields)</label>
+    <p class="note">Blocks requests to a built-in list of well-known ad and tracker domains, for this profile. This is a curated list of a few hundred common ones — not a full copy of a list like EasyList — so it catches the big, obvious trackers but will miss smaller ones.</p>
+
+    <label class="inline"><input type="checkbox" id="autoIndex" /> 🔎 Build my own search index from pages I visit</label>
+    <p class="note">As you browse, the full text of each page is added to your own local search index automatically, so your home page search finds pages from your own history before falling back to the web. Nothing leaves this Mac.</p>
+
     <label class="inline"><input type="checkbox" id="useHome" /> Use my own search home page for new tabs</label>
     <p class="note">When this is off, new tabs open a fixed address instead — like a classic browser homepage.</p>
 
@@ -41,7 +47,7 @@
     <hr />
 
     <h1 id="danger">Clear browsing data</h1>
-    <p class="note">Deletes your history and bookmarks on this Mac, and clears cookies/site data for this profile. This cannot be undone.</p>
+    <p class="note">Deletes your history, bookmarks and auto-built search index on this Mac, and clears cookies/site data for this profile. This cannot be undone.</p>
     <button id="clearData">Clear history, bookmarks and site data</button>
 
     <script>
@@ -56,6 +62,8 @@
         document.getElementById("useHome").checked = useHome;
         document.getElementById("homepage").value = useHome ? "" : s.homepage;
         document.getElementById("engine").value = s.searchEngine;
+        document.getElementById("blockAds").checked = s.blockAds !== false;
+        document.getElementById("autoIndex").checked = s.autoIndex !== false;
         syncHomepageRow();
       }
 
@@ -71,7 +79,9 @@
           if (!homepage.startsWith("http")) homepage = "https://" + homepage;
         }
         const searchEngine = document.getElementById("engine").value;
-        await window.browserData.settingsSet({ homepage, searchEngine });
+        const blockAds = document.getElementById("blockAds").checked;
+        const autoIndex = document.getElementById("autoIndex").checked;
+        await window.browserData.settingsSet({ homepage, searchEngine, blockAds, autoIndex });
         const saved = document.getElementById("saved");
         saved.style.display = "inline";
         setTimeout(() => (saved.style.display = "none"), 1500);

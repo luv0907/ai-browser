@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld("browserData", {
   searchRemoveSite: (hostname) => ipcRenderer.invoke("search:removeSite", hostname),
   searchClear: () => ipcRenderer.invoke("search:clear"),
   searchQuery: (q) => ipcRenderer.invoke("search:query", q),
+  searchIndexPage: (entry) => ipcRenderer.invoke("search:indexPage", entry),
 
   // live updates pushed from main.js
   onUpdate: (channel, cb) => ipcRenderer.on(channel, (event, data) => cb(data)),

@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, Menu, shell, session } = require("electron"
 const path = require("path");
 const fs = require("fs");
 const search = require("./search-engine.js");
+const { isBlockedHost } = require("./blocklist.js");
 
 // ---------- Where everything lives on THIS Mac (nothing is ever sent anywhere) ----------
 const ROOT = app.getPath("userData");
@@ -73,6 +74,8 @@ function getData(id) {
       settings: readJSON(files.settings, {
         homepage: "app:home",
         searchEngine: "https://www.google.com/search?q=",
+        blockAds: true,
+        autoIndex: true,
       }),
       index: readJSON(files.index, { pages: {} }),
     };
@@ -90,6 +93,7 @@ const windowProfile = new Map(); // webContents.id -> profileId
 const mainWindowsByProfile = {}; // profileId -> Set<BrowserWindow>
 const childWindowsByProfile = {}; // profileId -> { type: BrowserWindow }
 const downloadsWired = new Set(); // profileIds whose session already has a download listener
+const adblockWired = new Set(); // profileIds whose session already has a blocking webRequest listener
 let pickerWindow = null;
 
 function broadcast(profileId, channel, payload) {
@@ -141,8 +145,40 @@ function wireDownloadsForProfile(profileId) {
   });
 }
 
+// Blocks requests to known ad/tracker domains for this profile's own session,
+// so it applies to every webview the profile opens (Brave-style "Shields").
+// The on/off toggle itself lives in settings and is checked live on every
+// request, rather than re-registering the listener, since Electron sessions
+// only keep the LAST webRequest listener registered for a given event.
+function wireAdBlockForProfile(profileId) {
+  if (adblockWired.has(profileId)) return;
+  adblockWired.add(profileId);
+  const ses = session.fromPartition("persist:profile-" + profileId);
+  ses.webRequest.onBeforeRequest({ urls: ["*://*/*"] }, (details, callback) => {
+    const d = getData(profileId);
+    if (d.settings.blockAds === false) {
+      callback({});
+      return;
+    }
+    let host;
+    try {
+      host = new URL(details.url).hostname;
+    } catch {
+      callback({});
+      return;
+    }
+    if (isBlockedHost(host)) {
+      broadcast(profileId, "adblock:blocked", { webContentsId: details.webContentsId, url: details.url });
+      callback({ cancel: true });
+    } else {
+      callback({});
+    }
+  });
+}
+
 function createMainWindow(profileId, startUrl) {
   wireDownloadsForProfile(profileId);
+  wireAdBlockForProfile(profileId);
   const win = new BrowserWindow({
     width: 1200,
     height: 750,
@@ -336,8 +372,10 @@ ipcMain.handle("settings:clearData", (e) => {
   const d = getData(pid);
   d.history = [];
   d.bookmarks = [];
+  d.index = { pages: {} }; // auto-indexed page text counts as browsing data too
   save(pid, "history");
   save(pid, "bookmarks");
+  save(pid, "index");
   broadcast(pid, "history:updated", d.history);
   broadcast(pid, "bookmarks:updated", d.bookmarks);
   session.fromPartition("persist:profile-" + pid).clearStorageData();
@@ -363,17 +401,40 @@ ipcMain.handle("search:addSite", async (e, seedUrl) => {
   } catch (err) {
     return { error: err.message };
   }
-  Object.assign(d.index.pages, pages);
+  Object.entries(pages).forEach(([u, p]) => {
+    d.index.pages[u] = { ...p, source: "crawl" };
+  });
   const urls = Object.keys(d.index.pages);
-  if (urls.length > 400) {
-    urls.slice(0, urls.length - 400).forEach((u) => delete d.index.pages[u]);
+  if (urls.length > 1000) {
+    urls.slice(0, urls.length - 1000).forEach((u) => delete d.index.pages[u]);
   }
   save(pid, "index");
   return { pagesAdded: Object.keys(pages).length, totalPages: Object.keys(d.index.pages).length };
 });
+// Called automatically as you browse (when "auto-index" is on in Settings):
+// adds the page you just finished loading to your own search index, using
+// the text the webview already rendered — no extra crawling or fetching.
+ipcMain.handle("search:indexPage", (e, entry) => {
+  const pid = profileIdFor(e);
+  if (!pid || !entry?.url) return;
+  const d = getData(pid);
+  if (d.settings.autoIndex === false) return;
+  d.index.pages[entry.url] = {
+    title: entry.title || entry.url,
+    text: (entry.text || "").slice(0, 20000),
+    links: d.index.pages[entry.url]?.links || [],
+    crawledAt: Date.now(),
+    source: "visit",
+  };
+  const urls = Object.keys(d.index.pages);
+  if (urls.length > 1000) {
+    urls.slice(0, urls.length - 1000).forEach((u) => delete d.index.pages[u]);
+  }
+  save(pid, "index");
+});
 ipcMain.handle("search:list", (e) => {
   const d = getData(profileIdFor(e));
-  return Object.entries(d.index.pages).map(([url, p]) => ({ url, title: p.title, crawledAt: p.crawledAt }));
+  return Object.entries(d.index.pages).map(([url, p]) => ({ url, title: p.title, crawledAt: p.crawledAt, source: p.source || "crawl" }));
 });
 ipcMain.handle("search:removeSite", (e, hostname) => {
   const pid = profileIdFor(e);

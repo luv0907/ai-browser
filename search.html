@@ -18,9 +18,11 @@
   <body>
     <h1>🔎 My Search Engine</h1>
     <p class="note">
-      Add a website below. This crawls that site's own pages (same domain only, up to 40 pages)
-      and ranks them with a small TF-IDF + link-count algorithm — the same family of idea real
-      search engines use, just at a personal scale. It is not a copy of the whole internet.
+      Your index grows two ways: pages you add here get crawled (same domain only, up to 40
+      pages), and — if it's turned on in Settings — pages you simply browse to get added
+      automatically. Both are ranked with a small TF-IDF + link-count algorithm, the same
+      family of idea real search engines use, just at a personal scale. Not a copy of the
+      whole internet.
     </p>
 
     <div id="addRow">
@@ -31,7 +33,7 @@
 
     <div id="empty" style="display:none">Nothing indexed yet. Add a site above.</div>
     <table>
-      <thead><tr><th>Page title</th><th>Address</th><th></th></tr></thead>
+      <thead><tr><th>Page title</th><th>Address</th><th>Source</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
 
@@ -51,6 +53,10 @@
           const tdUrl = document.createElement("td");
           tdUrl.textContent = it.url;
           tdUrl.style.wordBreak = "break-all";
+          const tdSource = document.createElement("td");
+          tdSource.textContent = it.source === "visit" ? "🕘 from browsing" : "🔎 crawled";
+          tdSource.style.color = "#777";
+          tdSource.style.whiteSpace = "nowrap";
           const tdDel = document.createElement("td");
           const del = document.createElement("span");
           del.className = "del";
@@ -63,7 +69,7 @@
             load();
           };
           tdDel.appendChild(del);
-          tr.append(tdTitle, tdUrl, tdDel);
+          tr.append(tdTitle, tdUrl, tdSource, tdDel);
           rows.appendChild(tr);
         });
       }

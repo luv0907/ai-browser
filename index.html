@@ -16,6 +16,7 @@
       #bar { display: flex; gap: 6px; padding: 8px; background: #eee; position: relative; }
       #url { flex: 1; padding: 6px; font-size: 14px; }
       #star { font-size: 18px; width: 36px; }
+      #shield { font-size: 13px; }
       #profileBadge { font-size: 13px; }
       #menuBtn { width: 36px; }
 
@@ -65,6 +66,7 @@
       <input id="url" placeholder="Type a website or search..." />
       <button id="star" title="Bookmark this page">☆</button>
       <button id="go">Go</button>
+      <button id="shield" title="Ads/trackers blocked on this page">🛡️ 0</button>
       <button id="profileBadge" title="Switch profile"></button>
       <button id="menuBtn">☰</button>
       <div id="menu">
@@ -109,6 +111,7 @@
       const warnText = document.getElementById("warnText");
       const warnContinue = document.getElementById("warnContinue");
       const starBtn = document.getElementById("star");
+      const shieldBtn = document.getElementById("shield");
       const menuBtn = document.getElementById("menuBtn");
       const menu = document.getElementById("menu");
       const profileBadge = document.getElementById("profileBadge");
@@ -119,7 +122,8 @@
       let current = null;
       let pendingUrl = null;
       let bookmarksCache = [];
-      let settingsCache = { homepage: "app:home", searchEngine: "https://www.google.com/search?q=" };
+      let myProfileId = null;
+      let settingsCache = { homepage: "app:home", searchEngine: "https://www.google.com/search?q=", blockAds: true, autoIndex: true };
 
       // ---------- Safety rules ----------
       const SHORTENERS = ["bit.ly", "tinyurl.com", "t.co", "cutt.ly", "rb.gy", "is.gd"];
@@ -189,6 +193,9 @@
       function updateStar() {
         starBtn.textContent = current && !current.isHome && isBookmarked(current.lastUrl) ? "★" : "☆";
       }
+      function updateShieldBadge() {
+        shieldBtn.textContent = "🛡️ " + (current ? current.blockedCount || 0 : 0);
+      }
       async function toggleBookmark() {
         if (!current || current.isHome) return;
         const u = current.lastUrl;
@@ -224,6 +231,7 @@
         url.value = tab.isHome ? "" : tab.lastUrl;
         hideWarning();
         updateStar();
+        updateShieldBadge();
         if (tab.isHome) homeSearch.focus();
       }
 
@@ -285,6 +293,9 @@
 
       function newTab(startUrl) {
         const view = document.createElement("webview");
+        // Keeps this tab's cookies/storage inside THIS profile's own account
+        // (and lets Shields block ads/trackers for this profile's session).
+        view.setAttribute("partition", "persist:profile-" + myProfileId);
 
         const el = document.createElement("div");
         el.className = "tab";
@@ -307,9 +318,17 @@
           if (tab === current) updateStar();
         });
 
+        // Captures this webview's own content-process id so the shield counter
+        // (incremented from main.js when a request is blocked) can be matched
+        // back to the right tab.
+        view.addEventListener("dom-ready", () => {
+          tab.wcId = view.getWebContentsId();
+        });
+
         view.addEventListener("did-navigate", (e) => {
           tab.lastUrl = e.url;
           tab.isHome = false;
+          tab.blockedCount = 0; // a fresh page load starts a fresh shield count
           if (!e.url.startsWith("data:")) {
             window.browserData.historyAdd({ url: e.url, title: title.textContent });
           }
@@ -318,10 +337,25 @@
           homeOverlay.classList.remove("active");
           view.classList.add("active");
           updateStar();
+          updateShieldBadge();
           if (!e.url.startsWith("data:")) {
             const result = checkUrl(e.url);
             if (result.score >= 4) showWarning(e.url, result, false);
             else if (!pendingUrl) hideWarning();
+          }
+        });
+
+        // Auto-builds your own personal, local search index from pages you
+        // actually visit (off entirely if "autoIndex" is turned off in Settings).
+        view.addEventListener("did-stop-loading", async () => {
+          if (settingsCache.autoIndex === false || tab.isHome) return;
+          const pageUrl = tab.lastUrl;
+          if (!pageUrl || !pageUrl.startsWith("http")) return;
+          try {
+            const text = await view.executeJavaScript("document.body.innerText");
+            window.browserData.searchIndexPage({ url: pageUrl, title: title.textContent, text });
+          } catch {
+            // the page may block script injection; just skip indexing it
           }
         });
 
@@ -412,12 +446,20 @@
       window.browserData.onUpdate("bookmarks:updated", (data) => { bookmarksCache = data; updateStar(); });
       window.browserData.onUpdate("settings:updated", (data) => { settingsCache = data; });
 
+      // ---------- Shields: counts ads/trackers blocked, per tab ----------
+      window.browserData.onUpdate("adblock:blocked", (data) => {
+        const tab = tabs.find((t) => t.wcId === data.webContentsId);
+        if (!tab) return;
+        tab.blockedCount = (tab.blockedCount || 0) + 1;
+        if (tab === current) updateShieldBadge();
+      });
+
       // ---------- Start up ----------
       (async function init() {
         settingsCache = await window.browserData.settingsGet();
         bookmarksCache = await window.browserData.bookmarksList();
         const me = await window.profiles.current();
-        if (me) profileBadge.textContent = me.emoji + " " + me.name;
+        if (me) { profileBadge.textContent = me.emoji + " " + me.name; myProfileId = me.id; }
 
         const params = new URLSearchParams(location.search);
         const startUrl = params.get("start");
