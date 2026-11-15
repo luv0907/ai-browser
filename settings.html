@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body { font-family: sans-serif; margin: 0; padding: 20px; max-width: 480px; }
+      h1 { font-size: 18px; margin-top: 0; }
+      label { display: block; font-size: 13px; font-weight: bold; margin: 16px 0 6px; }
+      input, select { width: 100%; padding: 8px; font-size: 14px; box-sizing: border-box; }
+      button { padding: 10px 14px; font-size: 14px; cursor: pointer; margin-top: 16px; }
+      #saved { color: #2a8; font-size: 13px; margin-left: 10px; }
+      hr { margin: 28px 0; border: none; border-top: 1px solid #eee; }
+      #danger { color: #c33; }
+      p.note { font-size: 12px; color: #777; }
+    </style>
+  </head>
+  <body>
+    <h1>⚙️ Settings</h1>
+
+    <label for="homepage">Homepage (what new tabs open)</label>
+    <input id="homepage" placeholder="https://www.wikipedia.org" />
+
+    <label for="engine">Search engine (used when you type a search instead of a web address)</label>
+    <select id="engine">
+      <option value="https://www.google.com/search?q=">Google</option>
+      <option value="https://duckduckgo.com/?q=">DuckDuckGo</option>
+      <option value="https://www.bing.com/search?q=">Bing</option>
+    </select>
+
+    <button id="save">Save settings</button>
+    <span id="saved" style="display:none">✓ Saved</span>
+
+    <hr />
+
+    <h1 id="danger">Clear browsing data</h1>
+    <p class="note">Deletes your history and bookmarks on this Mac, and clears cookies/site data. This cannot be undone.</p>
+    <button id="clearData">Clear history, bookmarks and site data</button>
+
+    <script>
+      async function load() {
+        const s = await window.browserData.settingsGet();
+        document.getElementById("homepage").value = s.homepage;
+        document.getElementById("engine").value = s.searchEngine;
+      }
+
+      document.getElementById("save").onclick = async () => {
+        let homepage = document.getElementById("homepage").value.trim();
+        if (!homepage.startsWith("http")) homepage = "https://" + homepage;
+        const searchEngine = document.getElementById("engine").value;
+        await window.browserData.settingsSet({ homepage, searchEngine });
+        const saved = document.getElementById("saved");
+        saved.style.display = "inline";
+        setTimeout(() => (saved.style.display = "none"), 1500);
+      };
+
+      document.getElementById("clearData").onclick = async () => {
+        if (confirm("This deletes history, bookmarks and site data on this Mac. Continue?")) {
+          await window.browserData.settingsClearData();
+          alert("Cleared.");
+        }
+      };
+
+      load();
+    </script>
+  </body>
+</html>

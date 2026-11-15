@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body { font-family: sans-serif; margin: 0; padding: 16px; }
+      h1 { font-size: 18px; margin-top: 0; }
+      #top { display: flex; gap: 8px; margin-bottom: 12px; }
+      #search { flex: 1; padding: 8px; font-size: 14px; }
+      button { padding: 8px 12px; cursor: pointer; }
+      table { width: 100%; border-collapse: collapse; }
+      td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid #eee; font-size: 13px; vertical-align: top; }
+      a { color: #1a73e8; text-decoration: none; word-break: break-all; }
+      .del { color: #c33; cursor: pointer; padding: 0 6px; }
+      #empty { color: #777; padding: 20px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>🕘 History</h1>
+    <div id="top">
+      <input id="search" placeholder="Search history..." />
+      <button id="clear">Clear all history</button>
+    </div>
+    <div id="empty" style="display:none">No history yet.</div>
+    <table>
+      <thead><tr><th>Title</th><th>Address</th><th>When</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+
+    <script>
+      let items = [];
+
+      function render(filter) {
+        const rows = document.getElementById("rows");
+        const empty = document.getElementById("empty");
+        rows.innerHTML = "";
+        const f = (filter || "").toLowerCase();
+        const shown = items.filter(
+          (it) => !f || (it.title || "").toLowerCase().includes(f) || it.url.toLowerCase().includes(f)
+        );
+        empty.style.display = shown.length ? "none" : "block";
+        shown.forEach((it) => {
+          const tr = document.createElement("tr");
+          const when = new Date(it.time).toLocaleString();
+          const tdTitle = document.createElement("td");
+          tdTitle.textContent = it.title || "(no title)";
+          const tdUrl = document.createElement("td");
+          const a = document.createElement("a");
+          a.href = "#";
+          a.textContent = it.url;
+          a.onclick = (e) => { e.preventDefault(); window.browserData.openNewBrowserWindow(it.url); };
+          tdUrl.appendChild(a);
+          const tdWhen = document.createElement("td");
+          tdWhen.textContent = when;
+          const tdDel = document.createElement("td");
+          const del = document.createElement("span");
+          del.className = "del";
+          del.textContent = "✕";
+          del.onclick = () => window.browserData.historyRemove(it.time);
+          tdDel.appendChild(del);
+          tr.append(tdTitle, tdUrl, tdWhen, tdDel);
+          rows.appendChild(tr);
+        });
+      }
+
+      async function load() {
+        items = await window.browserData.historyList();
+        render(document.getElementById("search").value);
+      }
+
+      document.getElementById("search").oninput = (e) => render(e.target.value);
+      document.getElementById("clear").onclick = async () => {
+        if (confirm("Clear all history? This cannot be undone.")) {
+          await window.browserData.historyClear();
+        }
+      };
+
+      window.browserData.onUpdate("history:updated", (data) => {
+        items = data;
+        render(document.getElementById("search").value);
+      });
+
+      load();
+    </script>
+  </body>
+</html>

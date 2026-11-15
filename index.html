@@ -13,8 +13,16 @@
       #newtab { padding: 2px 10px; font-size: 16px; cursor: pointer; margin-bottom: 2px; }
 
       /* address bar */
-      #bar { display: flex; gap: 6px; padding: 8px; background: #eee; }
+      #bar { display: flex; gap: 6px; padding: 8px; background: #eee; position: relative; }
       #url { flex: 1; padding: 6px; font-size: 14px; }
+      #star { font-size: 18px; width: 36px; }
+      #menuBtn { width: 36px; }
+
+      /* menu dropdown */
+      #menu { display: none; position: absolute; right: 8px; top: 42px; background: white; border: 1px solid #ccc; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); z-index: 10; min-width: 190px; }
+      #menu.show { display: block; }
+      #menu button { display: block; width: 100%; text-align: left; padding: 10px 14px; border: none; background: none; cursor: pointer; font-size: 14px; }
+      #menu button:hover { background: #f0f0f0; }
 
       /* warning bar */
       #warn { display: none; padding: 8px 12px; background: #ffe3e3; border-bottom: 2px solid #d33; font-size: 14px; }
@@ -40,8 +48,17 @@
       <button id="back">←</button>
       <button id="forward">→</button>
       <button id="reload">⟳</button>
-      <input id="url" placeholder="Type a website, e.g. wikipedia.org" />
+      <input id="url" placeholder="Type a website or search..." />
+      <button id="star" title="Bookmark this page">☆</button>
       <button id="go">Go</button>
+      <button id="menuBtn">☰</button>
+      <div id="menu">
+        <button id="menuHistory">🕘 History (⌘Y)</button>
+        <button id="menuBookmarks">⭐ Bookmarks</button>
+        <button id="menuDownloads">⬇️ Downloads (⌘⇧J)</button>
+        <button id="menuSettings">⚙️ Settings (⌘,)</button>
+        <button id="menuNewWindow">🪟 New Window (⌘⇧N)</button>
+      </div>
     </div>
 
     <div id="warn">
@@ -68,12 +85,17 @@
       const warn = document.getElementById("warn");
       const warnText = document.getElementById("warnText");
       const warnContinue = document.getElementById("warnContinue");
+      const starBtn = document.getElementById("star");
+      const menuBtn = document.getElementById("menuBtn");
+      const menu = document.getElementById("menu");
 
       let tabs = [];
       let current = null;
       let pendingUrl = null;
+      let bookmarksCache = [];
+      let settingsCache = { homepage: "https://www.wikipedia.org", searchEngine: "https://www.google.com/search?q=" };
 
-      // ---------- Safety rules (Step 4) ----------
+      // ---------- Safety rules ----------
       const SHORTENERS = ["bit.ly", "tinyurl.com", "t.co", "cutt.ly", "rb.gy", "is.gd"];
       const WORDS = ["login", "verify", "update", "kyc", "otp", "secure", "reward", "gift", "free", "claim"];
       const BRANDS = {
@@ -114,7 +136,7 @@
         return { score, reasons };
       }
 
-      // ---------- Warning bar (Step 5) ----------
+      // ---------- Warning bar ----------
       function showWarning(text, result, blocked) {
         pendingUrl = blocked ? text : null;
         warnText.textContent =
@@ -123,12 +145,10 @@
         warnContinue.style.display = blocked ? "inline-block" : "none";
         warn.classList.add("show");
       }
-
       function hideWarning() {
         pendingUrl = null;
         warn.classList.remove("show");
       }
-
       warnContinue.onclick = () => {
         const target = pendingUrl;
         hideWarning();
@@ -136,7 +156,35 @@
       };
       document.getElementById("warnClose").onclick = hideWarning;
 
-      // ---------- Tabs (Step 7) ----------
+      // ---------- Bookmark star ----------
+      function isBookmarked(u) {
+        return bookmarksCache.some((b) => b.url === u);
+      }
+      function updateStar() {
+        starBtn.textContent = current && isBookmarked(current.lastUrl) ? "★" : "☆";
+      }
+      async function toggleBookmark() {
+        if (!current) return;
+        const u = current.lastUrl;
+        if (isBookmarked(u)) {
+          await window.browserData.bookmarksRemove(u);
+        } else {
+          const title = current.el.querySelector(".title").textContent || u;
+          await window.browserData.bookmarksAdd({ url: u, title });
+        }
+      }
+      starBtn.onclick = toggleBookmark;
+
+      // ---------- Menu dropdown ----------
+      menuBtn.onclick = (e) => { e.stopPropagation(); menu.classList.toggle("show"); };
+      document.addEventListener("click", () => menu.classList.remove("show"));
+      document.getElementById("menuHistory").onclick = () => window.browserData.openWindow("history");
+      document.getElementById("menuBookmarks").onclick = () => window.browserData.openWindow("bookmarks");
+      document.getElementById("menuDownloads").onclick = () => window.browserData.openWindow("downloads");
+      document.getElementById("menuSettings").onclick = () => window.browserData.openWindow("settings");
+      document.getElementById("menuNewWindow").onclick = () => window.browserData.openNewBrowserWindow();
+
+      // ---------- Tabs ----------
       function selectTab(tab) {
         current = tab;
         tabs.forEach((t) => {
@@ -145,6 +193,7 @@
         });
         url.value = tab.lastUrl;
         hideWarning();
+        updateStar();
       }
 
       function closeTab(tab) {
@@ -154,6 +203,14 @@
         tab.el.remove();
         if (tabs.length === 0) { newTab(); return; }
         if (tab === current) selectTab(tabs[Math.max(0, i - 1)]);
+      }
+
+      function toLoadable(text) {
+        text = text.trim();
+        if (!text) return null;
+        const looksLikeUrl = text.startsWith("http") || (/^[\w-]+(\.[\w-]+)+(\/.*)?$/.test(text) && !text.includes(" "));
+        if (looksLikeUrl) return text.startsWith("http") ? text : "https://" + text;
+        return settingsCache.searchEngine + encodeURIComponent(text);
       }
 
       function newTab(startUrl) {
@@ -169,17 +226,22 @@
         close.textContent = "×";
         el.append(title, close);
 
-        const tab = { view, el, lastUrl: startUrl || "https://www.wikipedia.org" };
+        const tab = { view, el, lastUrl: startUrl || settingsCache.homepage };
 
         el.onclick = () => selectTab(tab);
         close.onclick = (e) => { e.stopPropagation(); closeTab(tab); };
 
-        view.addEventListener("page-title-updated", (e) => { title.textContent = e.title; });
+        view.addEventListener("page-title-updated", (e) => {
+          title.textContent = e.title;
+          if (tab === current) updateStar();
+        });
+
         view.addEventListener("did-navigate", (e) => {
           tab.lastUrl = e.url;
+          window.browserData.historyAdd({ url: e.url, title: title.textContent });
           if (tab !== current) return;
           url.value = e.url;
-          // also catches links you click inside a page
+          updateStar();
           const result = checkUrl(e.url);
           if (result.score >= 4) showWarning(e.url, result, false);
           else if (!pendingUrl) hideWarning();
@@ -196,12 +258,11 @@
 
       // ---------- Address bar + buttons ----------
       function go() {
-        let text = url.value.trim();
+        const text = toLoadable(url.value);
         if (!text) return;
-        if (!text.startsWith("http")) text = "https://" + text;
 
         const result = checkUrl(text);
-        if (result.score >= 4) {            // Step 5: stop risky sites BEFORE loading
+        if (result.score >= 4) {
           showWarning(text, result, true);
           return;
         }
@@ -236,8 +297,25 @@
           "\n\nThis is a simple rule check, not a guarantee.";
       };
 
-      // ---------- Start with one tab ----------
-      newTab();
+      // ---------- Keyboard shortcuts from the app menu ----------
+      window.browserData.onShortcut("shortcut:new-tab", () => newTab());
+      window.browserData.onShortcut("shortcut:close-tab", () => current && closeTab(current));
+      window.browserData.onShortcut("shortcut:focus-url", () => { url.focus(); url.select(); });
+      window.browserData.onShortcut("shortcut:reload", () => current && current.view.reload());
+      window.browserData.onShortcut("shortcut:bookmark", () => toggleBookmark());
+
+      // ---------- Stay in sync with Bookmarks/Settings windows ----------
+      window.browserData.onUpdate("bookmarks:updated", (data) => { bookmarksCache = data; updateStar(); });
+      window.browserData.onUpdate("settings:updated", (data) => { settingsCache = data; });
+
+      // ---------- Start up ----------
+      (async function init() {
+        settingsCache = await window.browserData.settingsGet();
+        bookmarksCache = await window.browserData.bookmarksList();
+        const params = new URLSearchParams(location.search);
+        const startUrl = params.get("start");
+        newTab(startUrl || settingsCache.homepage);
+      })();
     </script>
   </body>
 </html>
