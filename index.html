@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body { margin: 0; display: flex; flex-direction: column; height: 100vh; font-family: sans-serif; }
+
+      /* tabs */
+      #tabs { display: flex; gap: 4px; padding: 6px 8px 0; background: #d8d8d8; align-items: flex-end; overflow-x: auto; }
+      .tab { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #c4c4c4; border-radius: 8px 8px 0 0; cursor: pointer; font-size: 13px; max-width: 180px; white-space: nowrap; }
+      .tab.active { background: #eee; font-weight: bold; }
+      .tab .title { overflow: hidden; text-overflow: ellipsis; }
+      .tab .close { color: #555; }
+      #newtab { padding: 2px 10px; font-size: 16px; cursor: pointer; margin-bottom: 2px; }
+
+      /* address bar */
+      #bar { display: flex; gap: 6px; padding: 8px; background: #eee; }
+      #url { flex: 1; padding: 6px; font-size: 14px; }
+
+      /* warning bar */
+      #warn { display: none; padding: 8px 12px; background: #ffe3e3; border-bottom: 2px solid #d33; font-size: 14px; }
+      #warn.show { display: block; }
+      #warnText { white-space: pre-wrap; margin-bottom: 8px; }
+
+      /* page area + sidebar */
+      #main { display: flex; flex: 1; min-height: 0; }
+      #views { flex: 1; position: relative; }
+      webview { position: absolute; inset: 0; width: 100%; height: 100%; visibility: hidden; }
+      webview.active { visibility: visible; }
+      #side { width: 320px; padding: 12px; background: #f7f7f7; border-left: 1px solid #ccc; overflow-y: auto; }
+      #side button { width: 100%; padding: 10px; font-size: 15px; margin-bottom: 8px; }
+      #out { white-space: pre-wrap; margin-top: 12px; font-size: 14px; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <div id="tabs">
+      <button id="newtab">+</button>
+    </div>
+
+    <div id="bar">
+      <button id="back">←</button>
+      <button id="forward">→</button>
+      <button id="reload">⟳</button>
+      <input id="url" placeholder="Type a website, e.g. wikipedia.org" />
+      <button id="go">Go</button>
+    </div>
+
+    <div id="warn">
+      <div id="warnText"></div>
+      <button id="warnContinue">Continue anyway</button>
+      <button id="warnClose">Dismiss</button>
+    </div>
+
+    <div id="main">
+      <div id="views"></div>
+      <div id="side">
+        <button id="summarize">✨ Summarize page</button>
+        <button id="check">🛡️ Check safety</button>
+        <div id="out">Open a page, then click a button.</div>
+      </div>
+    </div>
+
+    <script>
+      const url = document.getElementById("url");
+      const out = document.getElementById("out");
+      const tabsBar = document.getElementById("tabs");
+      const newTabBtn = document.getElementById("newtab");
+      const viewsBox = document.getElementById("views");
+      const warn = document.getElementById("warn");
+      const warnText = document.getElementById("warnText");
+      const warnContinue = document.getElementById("warnContinue");
+
+      let tabs = [];
+      let current = null;
+      let pendingUrl = null;
+
+      // ---------- Safety rules (Step 4) ----------
+      const SHORTENERS = ["bit.ly", "tinyurl.com", "t.co", "cutt.ly", "rb.gy", "is.gd"];
+      const WORDS = ["login", "verify", "update", "kyc", "otp", "secure", "reward", "gift", "free", "claim"];
+      const BRANDS = {
+        sbi: ["sbi.co.in", "onlinesbi.sbi"],
+        hdfc: ["hdfcbank.com"],
+        icici: ["icicibank.com"],
+        paytm: ["paytm.com"],
+        phonepe: ["phonepe.com"],
+        google: ["google.com", "google.co.in"],
+        amazon: ["amazon.in", "amazon.com"],
+        flipkart: ["flipkart.com"],
+      };
+
+      function checkUrl(urlText) {
+        let u;
+        try { u = new URL(urlText); } catch { return { score: 0, reasons: ["Not a valid web address"] }; }
+
+        const host = u.hostname.toLowerCase();
+        const reasons = [];
+        let score = 0;
+        function flag(points, text) { score += points; reasons.push(text); }
+
+        if (u.protocol !== "https:") flag(2, "Not using HTTPS (connection is not encrypted)");
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) flag(3, "Address is a raw number, not a name");
+        if (host.includes("xn--")) flag(3, "Uses look-alike (punycode) characters");
+        if (host.split(".").length > 4) flag(1, "Too many sub-domains");
+        if ((host.match(/-/g) || []).length >= 3) flag(1, "Many hyphens in the name");
+        if (SHORTENERS.includes(host)) flag(2, "Link shortener hides the real destination");
+
+        for (const [brand, domains] of Object.entries(BRANDS)) {
+          const isReal = domains.some((d) => host === d || host.endsWith("." + d));
+          if (host.includes(brand) && !isReal) flag(3, `Name has "${brand}" but it is not the real ${brand} site`);
+        }
+
+        const hits = WORDS.filter((w) => host.includes(w) || u.pathname.toLowerCase().includes(w));
+        if (hits.length) flag(1, "Pressure words: " + hits.join(", "));
+
+        return { score, reasons };
+      }
+
+      // ---------- Warning bar (Step 5) ----------
+      function showWarning(text, result, blocked) {
+        pendingUrl = blocked ? text : null;
+        warnText.textContent =
+          (blocked ? "⚠️ Stopped before loading: " : "⚠️ This page looks risky: ") + text + "\n" +
+          result.reasons.map((r) => "• " + r).join("\n");
+        warnContinue.style.display = blocked ? "inline-block" : "none";
+        warn.classList.add("show");
+      }
+
+      function hideWarning() {
+        pendingUrl = null;
+        warn.classList.remove("show");
+      }
+
+      warnContinue.onclick = () => {
+        const target = pendingUrl;
+        hideWarning();
+        if (target) current.view.src = target;
+      };
+      document.getElementById("warnClose").onclick = hideWarning;
+
+      // ---------- Tabs (Step 7) ----------
+      function selectTab(tab) {
+        current = tab;
+        tabs.forEach((t) => {
+          t.view.classList.toggle("active", t === tab);
+          t.el.classList.toggle("active", t === tab);
+        });
+        url.value = tab.lastUrl;
+        hideWarning();
+      }
+
+      function closeTab(tab) {
+        const i = tabs.indexOf(tab);
+        tabs.splice(i, 1);
+        tab.view.remove();
+        tab.el.remove();
+        if (tabs.length === 0) { newTab(); return; }
+        if (tab === current) selectTab(tabs[Math.max(0, i - 1)]);
+      }
+
+      function newTab(startUrl) {
+        const view = document.createElement("webview");
+
+        const el = document.createElement("div");
+        el.className = "tab";
+        const title = document.createElement("span");
+        title.className = "title";
+        title.textContent = "New tab";
+        const close = document.createElement("span");
+        close.className = "close";
+        close.textContent = "×";
+        el.append(title, close);
+
+        const tab = { view, el, lastUrl: startUrl || "https://www.wikipedia.org" };
+
+        el.onclick = () => selectTab(tab);
+        close.onclick = (e) => { e.stopPropagation(); closeTab(tab); };
+
+        view.addEventListener("page-title-updated", (e) => { title.textContent = e.title; });
+        view.addEventListener("did-navigate", (e) => {
+          tab.lastUrl = e.url;
+          if (tab !== current) return;
+          url.value = e.url;
+          // also catches links you click inside a page
+          const result = checkUrl(e.url);
+          if (result.score >= 4) showWarning(e.url, result, false);
+          else if (!pendingUrl) hideWarning();
+        });
+
+        view.src = tab.lastUrl;
+        viewsBox.appendChild(view);
+        tabsBar.insertBefore(el, newTabBtn);
+        tabs.push(tab);
+        selectTab(tab);
+      }
+
+      newTabBtn.onclick = () => newTab();
+
+      // ---------- Address bar + buttons ----------
+      function go() {
+        let text = url.value.trim();
+        if (!text) return;
+        if (!text.startsWith("http")) text = "https://" + text;
+
+        const result = checkUrl(text);
+        if (result.score >= 4) {            // Step 5: stop risky sites BEFORE loading
+          showWarning(text, result, true);
+          return;
+        }
+        hideWarning();
+        current.view.src = text;
+      }
+
+      document.getElementById("go").onclick = go;
+      url.onkeydown = (e) => { if (e.key === "Enter") go(); };
+      document.getElementById("back").onclick = () => current.view.goBack();
+      document.getElementById("forward").onclick = () => current.view.goForward();
+      document.getElementById("reload").onclick = () => current.view.reload();
+
+      // ---------- Sidebar buttons ----------
+      document.getElementById("summarize").onclick = async () => {
+        out.textContent = "Reading the page... ⏳";
+        const pageText = await current.view.executeJavaScript("document.body.innerText");
+        out.textContent = "Asking AI... ⏳";
+        out.textContent = await window.ai.summarize(pageText);
+      };
+
+      document.getElementById("check").onclick = () => {
+        let text = url.value.trim();
+        if (!text) { out.textContent = "Type or open an address first."; return; }
+        if (!text.startsWith("http")) text = "https://" + text;
+
+        const { score, reasons } = checkUrl(text);
+        const level = score >= 4 ? "🔴 HIGH RISK" : score >= 2 ? "🟠 MEDIUM RISK" : "🟢 LOW RISK";
+        out.textContent =
+          level + "  (score " + score + ")\n\n" +
+          (reasons.length ? reasons.map((r) => "• " + r).join("\n") : "No warning signs found.") +
+          "\n\nThis is a simple rule check, not a guarantee.";
+      };
+
+      // ---------- Start with one tab ----------
+      newTab();
+    </script>
+  </body>
+</html>
